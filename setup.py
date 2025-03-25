@@ -1,7 +1,7 @@
 from setuptools import setup, find_packages
 
 setup(
-    name="",           # Replace with your package name
+    name="GetLatestGamePrices",           # Replace with your package name
     version="0.1.0",            # Set your version
     description="This Package gets you the deals about a single game from ggdeals. also this is my first package to learn about things like packages, version control, ci/cd pipelines.",
     author="AbhayCerberus",
