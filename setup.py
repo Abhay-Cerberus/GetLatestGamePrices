@@ -11,5 +11,5 @@ setup(
         "requests",
         "beautifulsoup4"
     ],
-    url="https://github.com/Abhay_Cerberus/package"
+    url="https://github.com/Abhay_Cerberus/GetLatestGamePrices"
 )
