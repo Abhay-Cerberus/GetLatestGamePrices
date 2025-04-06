@@ -1,38 +1,19 @@
 name: release
 
 on:
-  workflow_dispatch:
   push:
-    tags:
-      - "*-release"
-      - "*-beta"
+    branches:
+      - "**"     # Trigger on all branches
+  workflow_dispatch:  # Allow manual run
+
 jobs:
   details:
     runs-on: ubuntu-latest
     outputs:
       package_name: ${{ steps.package_information.outputs.package_name }}
-      new_version: ${{ steps.release.outputs.new_version }}
-      suffix: ${{ steps.release.outputs.suffix }}
-      tag_name: ${{ steps.release.outputs.tag_name }}
+      new_version: ${{ steps.versioning.outputs.new_version }}
     steps:
       - uses: actions/checkout@v2
-      - name: Extract tag and Details
-        id: release
-        run: |
-          if [ "${{ github.ref_type }}" = "tag" ]; then
-            TAG_NAME=${GITHUB_REF#refs/tags/}
-            NEW_VERSION=$(echo $TAG_NAME | awk -F'-' '{print $1}')
-            SUFFIX=$(echo $TAG_NAME | awk -F'-' '{print $2}')
-            echo "new_version=$NEW_VERSION" >> "$GITHUB_OUTPUT"
-            echo "suffix=$SUFFIX" >> "$GITHUB_OUTPUT"
-            echo "tag_name=$TAG_NAME" >> "$GITHUB_OUTPUT"
-            echo "Version is $NEW_VERSION"
-            echo "Suffix is $SUFFIX"
-            echo "Tag name is $TAG_NAME"
-          else
-            echo "No tag found"
-            exit 1
-          fi
 
       - name: Set up Python
         uses: actions/setup-python@v4
@@ -45,8 +26,16 @@ jobs:
         run: |
           package_information=$(poetry version)
           PACKAGE_NAME=$(echo $package_information | awk '{print $1}')
-          echo "Package name: $PACKAGE_NAME"
           echo "package_name=$PACKAGE_NAME" >> "$GITHUB_OUTPUT"
+          echo "Package name: $PACKAGE_NAME"
+
+      - name: Determine new version (you can customize this)
+        id: versioning
+        run: |
+          # Example: read version from pyproject.toml directly
+          VERSION=$(poetry version | awk '{print $2}')
+          echo "new_version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "Version to use: $VERSION"
 
   check_pypi:
     needs: details
@@ -54,17 +43,16 @@ jobs:
     steps:
       - name: Fetch information from PyPI
         run: |
-          PACKAGE_NAME=${{ needs.details.outputs.package_name}}
+          PACKAGE_NAME=${{ needs.details.outputs.package_name }}
           response=$(curl -s https://pypi.org/pypi/$PACKAGE_NAME/json || echo "{}")
           latest_previous_version=$(echo $response | grep -oP '"releases":\{"\K[^"]+' | sort -rV | head -n 1)
           if [ -z "$latest_previous_version" ]; then
-            echo "Package not found on PyPI."
             latest_previous_version="0.0.0"
           fi
           echo "Latest version on PyPI: $latest_previous_version"
           echo "latest_previous_version=$latest_previous_version" >> $GITHUB_ENV
 
-      - name: Compare versions and exit if not newer
+      - name: Compare versions
         run: |
           NEW_VERSION=${{ needs.details.outputs.new_version }}
           LATEST_VERSION=$latest_previous_version
@@ -91,13 +79,13 @@ jobs:
         run: |
           poetry version ${{ needs.details.outputs.new_version }}
 
-      - name: Bump version in pyproject.toml
+      - name: Commit version bump
         run: |
           git config user.name "GitHub Actions"
           git config user.email "actions@github.com"
           git checkout -b version-bump-${{ needs.details.outputs.new_version }}
           git add pyproject.toml
-          git commit -m "Bump version to $VERSION"
+          git commit -m "Bump version to ${{ needs.details.outputs.new_version }}"
           git push origin version-bump-${{ needs.details.outputs.new_version }}
 
       - name: Create Pull Request
@@ -112,8 +100,7 @@ jobs:
         run: poetry install --sync --no-interaction
 
       - name: Build source and wheel distribution
-        run: |
-          poetry build
+        run: poetry build
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v3
@@ -128,7 +115,6 @@ jobs:
     environment:
       name: publish
     permissions:
-      # In order to use Trusted Publisher
       id-token: write
       contents: read
 
@@ -142,19 +128,6 @@ jobs:
       - name: Publish distribution to PyPI
         uses: pypa/gh-action-pypi-publish@release/v1
 
-      # Alternatively, use this one
-      # - name: Mint token
-      #   id: mint
-      #   uses: tschm/token-mint-action@v1.0.3
-
-      #  Requires poetry to be installed
-      # - name: Install Poetry
-      #   uses: snok/install-poetry@v1
-
-      # - name: Publish the package with poetry
-      #   run: |
-      #     poetry publish -u __token__ -p '${{ steps.mint.outputs.api-token }}'
-
   bump-version:
     needs: [details, pypi_publish]
     runs-on: ubuntu-latest
@@ -162,7 +135,7 @@ jobs:
       - name: Checkout Code
         uses: actions/checkout@v3
         with:
-          fetch-depth: 0 # Fetch full history to avoid issues with tags and branches
+          fetch-depth: 0
 
       - name: Set up Python
         uses: actions/setup-python@v4
@@ -178,7 +151,7 @@ jobs:
       - name: Install dependencies
         run: poetry install
 
-      - name: Bump version
+      - name: Bump version (again for safety)
         run: |
           VERSION="${{ needs.details.outputs.new_version }}"
           poetry version $VERSION
