@@ -2,7 +2,7 @@ import requests
 from bs4 import BeautifulSoup
 import re
 
-def GetGamePrices(game):
+def get_game_prices(game):
     game = game.lower().replace(' ', '-').replace(':', '').replace('.', '')
     try:
         headers = {
@@ -16,7 +16,7 @@ def GetGamePrices(game):
             soup = BeautifulSoup(html_content, 'html.parser')
             Prices = soup.find('div', class_='d-flex header-game-prices-content active')
             if Prices:
-                Official_And_Keyshop_Prices = ExtractPrices(Prices.text)
+                Official_And_Keyshop_Prices = extract_prices(Prices.text)
                 if Official_And_Keyshop_Prices == {"official stores": None, "keyshops": None}:
                     return 'Free'
                 return Official_And_Keyshop_Prices
@@ -27,7 +27,7 @@ def GetGamePrices(game):
     except Exception as e:
         print("Something went wrong:", e)
     
-def ExtractPrices(data):
+def extract_prices(data):
     pattern_standard = r"(official[-\s]*stores|keyshops)[-:\s]*[~]?\$(\d+\.\d+)"
     matches = re.findall(pattern_standard, data, flags=re.IGNORECASE)
     prices = {"official stores": None, "keyshops": None}
