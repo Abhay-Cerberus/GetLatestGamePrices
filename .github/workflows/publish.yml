@@ -3,7 +3,7 @@ name: release
 on:
   push:
     branches:
-      - "**"     # Trigger on all branches
+      - "**"  # Run on all branches
   workflow_dispatch:  # Allow manual run
 
 jobs:
@@ -19,7 +19,11 @@ jobs:
         uses: actions/setup-python@v4
         with:
           python-version: "3.12"
-          cache: "poetry"
+
+      - name: Install Poetry
+        run: |
+          curl -sSL https://install.python-poetry.org | python3 -
+          echo "$HOME/.local/bin" >> $GITHUB_PATH
 
       - name: Get Name of Package
         id: package_information
@@ -29,19 +33,18 @@ jobs:
           echo "package_name=$PACKAGE_NAME" >> "$GITHUB_OUTPUT"
           echo "Package name: $PACKAGE_NAME"
 
-      - name: Determine new version (you can customize this)
+      - name: Determine new version
         id: versioning
         run: |
-          # Example: read version from pyproject.toml directly
           VERSION=$(poetry version | awk '{print $2}')
           echo "new_version=$VERSION" >> "$GITHUB_OUTPUT"
-          echo "Version to use: $VERSION"
+          echo "Using version: $VERSION"
 
   check_pypi:
     needs: details
     runs-on: ubuntu-latest
     steps:
-      - name: Fetch information from PyPI
+      - name: Fetch version from PyPI
         run: |
           PACKAGE_NAME=${{ needs.details.outputs.package_name }}
           response=$(curl -s https://pypi.org/pypi/$PACKAGE_NAME/json || echo "{}")
@@ -49,7 +52,6 @@ jobs:
           if [ -z "$latest_previous_version" ]; then
             latest_previous_version="0.0.0"
           fi
-          echo "Latest version on PyPI: $latest_previous_version"
           echo "latest_previous_version=$latest_previous_version" >> $GITHUB_ENV
 
       - name: Compare versions
@@ -73,9 +75,13 @@ jobs:
         uses: actions/setup-python@v4
         with:
           python-version: "3.12"
-          cache: "poetry"
 
-      - name: Set project version with Poetry
+      - name: Install Poetry
+        run: |
+          curl -sSL https://install.python-poetry.org | python3 -
+          echo "$HOME/.local/bin" >> $GITHUB_PATH
+
+      - name: Set project version
         run: |
           poetry version ${{ needs.details.outputs.new_version }}
 
@@ -97,9 +103,9 @@ jobs:
           labels: "version-bump"
 
       - name: Install dependencies
-        run: poetry install --sync --no-interaction
+        run: poetry install --no-interaction
 
-      - name: Build source and wheel distribution
+      - name: Build distributions
         run: poetry build
 
       - name: Upload artifacts
@@ -109,7 +115,7 @@ jobs:
           path: dist/
 
   pypi_publish:
-    name: Upload release to PyPI
+    name: Upload to PyPI
     needs: [setup_and_build, details]
     runs-on: ubuntu-latest
     environment:
@@ -125,15 +131,14 @@ jobs:
           name: dist
           path: dist/
 
-      - name: Publish distribution to PyPI
+      - name: Publish to PyPI
         uses: pypa/gh-action-pypi-publish@release/v1
 
   bump-version:
     needs: [details, pypi_publish]
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout Code
-        uses: actions/checkout@v3
+      - uses: actions/checkout@v3
         with:
           fetch-depth: 0
 
@@ -141,26 +146,25 @@ jobs:
         uses: actions/setup-python@v4
         with:
           python-version: "3.12"
-          cache: "poetry"
 
       - name: Install Poetry
         run: |
           curl -sSL https://install.python-poetry.org | python3 -
-          export PATH="$HOME/.local/bin:$PATH"
+          echo "$HOME/.local/bin" >> $GITHUB_PATH
 
       - name: Install dependencies
         run: poetry install
 
-      - name: Bump version (again for safety)
+      - name: Final version bump
         run: |
           VERSION="${{ needs.details.outputs.new_version }}"
           poetry version $VERSION
           git config user.name "GitHub Actions"
           git config user.email "actions@github.com"
-          git checkout -b version-bump-${{ needs.details.outputs.new_version }}
+          git checkout -b version-bump-${VERSION}
           git add pyproject.toml
           git commit -m "Bump version to $VERSION"
-          git push origin version-bump-${{ needs.details.outputs.new_version }}
+          git push origin version-bump-${VERSION}
 
       - name: Create Pull Request
         uses: peter-evans/create-pull-request@v4
