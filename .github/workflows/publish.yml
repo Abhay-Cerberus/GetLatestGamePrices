@@ -2,47 +2,33 @@ name: release
 
 on:
   push:
-    tags:
-      - "*-release"
-      - "*-beta"
-  workflow_dispatch:  
+    branches:
+      - main
+  workflow_dispatch:
 
 jobs:
   details:
     runs-on: ubuntu-latest
     outputs:
-      package_name: ${{ steps.package_information.outputs.package_name }}
-      new_version: ${{ steps.release.outputs.new_version }}
-      suffix: ${{ steps.release.outputs.suffix }}
-      tag_name: ${{ steps.release.outputs.tag_name }}
+      package_name: ${{ steps.package_info.outputs.package_name }}
+      new_version: ${{ steps.package_info.outputs.new_version }}
     steps:
       - uses: actions/checkout@v2
 
-      - name: Extract tag and Details
-        id: release
+      - name: Get Package Name and Version from setup.py
+        id: package_info
         run: |
-          if [[ "$GITHUB_REF" == refs/tags/* ]]; then
-            TAG_NAME=${GITHUB_REF#refs/tags/}
-            NEW_VERSION=$(echo $TAG_NAME | awk -F'-' '{print $1}')
-            SUFFIX=$(echo $TAG_NAME | awk -F'-' '{print $2}')
-            echo "new_version=$NEW_VERSION" >> "$GITHUB_OUTPUT"
-            echo "suffix=$SUFFIX" >> "$GITHUB_OUTPUT"
-            echo "tag_name=$TAG_NAME" >> "$GITHUB_OUTPUT"
-            echo "Version is $NEW_VERSION"
-            echo "Suffix is $SUFFIX"
-            echo "Tag name is $TAG_NAME"
-          else
-            echo "No tag found"
-            exit 1
-          fi
-
-      - name: Get Name of Package
-        id: package_information
-        run: |
-          # Assumes your setup.py supports --name (setuptools does)
+          # Get package name (using setup.py --name if supported)
           PACKAGE_NAME=$(python setup.py --name)
+          
+          # Extract version from setup.py. Adjust the regex if needed.
+          NEW_VERSION=$(grep "version=" setup.py | head -n1 | sed "s/.*version=['\"]\([^'\"]*\)['\"].*/\1/")
+          
           echo "Package name: $PACKAGE_NAME"
+          echo "New version: $NEW_VERSION"
+          
           echo "package_name=$PACKAGE_NAME" >> "$GITHUB_OUTPUT"
+          echo "new_version=$NEW_VERSION" >> "$GITHUB_OUTPUT"
 
   check_pypi:
     needs: details
@@ -60,7 +46,7 @@ jobs:
           echo "Latest version on PyPI: $latest_previous_version"
           echo "latest_previous_version=$latest_previous_version" >> $GITHUB_ENV
 
-      - name: Compare versions and exit if not newer
+      - name: Compare versions
         run: |
           NEW_VERSION=${{ needs.details.outputs.new_version }}
           LATEST_VERSION=$latest_previous_version
@@ -71,7 +57,7 @@ jobs:
             echo "The new version $NEW_VERSION is greater than the latest version $LATEST_VERSION on PyPI."
           fi
 
-  setup_and_build:
+  build:
     needs: details
     runs-on: ubuntu-latest
     steps:
@@ -82,51 +68,23 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Update version in setup.py
-        run: |
-          NEW_VERSION=${{ needs.details.outputs.new_version }}
-          # This assumes setup.py contains a line like: version='old_version',
-          # Adjust the sed command if your version line differs.
-          sed -i "s/version=['\"][^'\"]*['\"],/version='$NEW_VERSION',/" setup.py
-          echo "Updated setup.py with version $NEW_VERSION"
-
-      - name: Commit version bump
-        run: |
-          git config user.name "GitHub Actions"
-          git config user.email "actions@github.com"
-          git checkout -b version-bump-${{ needs.details.outputs.new_version }}
-          git add setup.py
-          git commit -m "Bump version to ${{ needs.details.outputs.new_version }}"
-          git push origin version-bump-${{ needs.details.outputs.new_version }}
-
-      - name: Create Pull Request
-        uses: peter-evans/create-pull-request@v4
-        with:
-          branch: version-bump-${{ needs.details.outputs.new_version }}
-          title: "Bump version to ${{ needs.details.outputs.new_version }}"
-          body: "This PR bumps the version to ${{ needs.details.outputs.new_version }}."
-          labels: "version-bump"
-
-      - name: Install dependencies
+      - name: Install Build Dependencies
         run: |
           python -m pip install --upgrade pip setuptools wheel
-          if [ -f requirements.txt ]; then
-            pip install -r requirements.txt
-          fi
+          if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
 
-      - name: Build source and wheel distribution
-        run: |
-          python setup.py sdist bdist_wheel
+      - name: Build Distribution
+        run: python setup.py sdist bdist_wheel
 
-      - name: Upload artifacts
+      - name: Upload Artifacts
         uses: actions/upload-artifact@v3
         with:
           name: dist
           path: dist/
 
-  pypi_publish:
-    name: Upload release to PyPI
-    needs: [setup_and_build, details]
+  publish:
+    name: Publish to PyPI
+    needs: [build, details]
     runs-on: ubuntu-latest
     environment:
       name: publish
@@ -134,51 +92,13 @@ jobs:
       id-token: write
       contents: read
     steps:
-      - name: Download artifacts
+      - name: Download Artifacts
         uses: actions/download-artifact@v3
         with:
           name: dist
           path: dist/
 
-      - name: Publish distribution to PyPI
+      - name: Publish to PyPI
         uses: pypa/gh-action-pypi-publish@release/v1
-
-  bump-version:
-    needs: [details, pypi_publish]
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout Code
-        uses: actions/checkout@v3
         with:
-          fetch-depth: 0
-
-      - name: Set up Python
-        uses: actions/setup-python@v4
-        with:
-          python-version: "3.12"
-
-      - name: Install dependencies
-        run: |
-          python -m pip install --upgrade pip setuptools wheel
-          if [ -f requirements.txt ]; then
-            pip install -r requirements.txt
-          fi
-
-      - name: Bump version in setup.py
-        run: |
-          NEW_VERSION=${{ needs.details.outputs.new_version }}
-          sed -i "s/version=['\"][^'\"]*['\"],/version='$NEW_VERSION',/" setup.py
-          git config user.name "GitHub Actions"
-          git config user.email "actions@github.com"
-          git checkout -b version-bump-${NEW_VERSION}
-          git add setup.py
-          git commit -m "Bump version to $NEW_VERSION"
-          git push origin version-bump-${NEW_VERSION}
-
-      - name: Create Pull Request
-        uses: peter-evans/create-pull-request@v4
-        with:
-          branch: version-bump-${{ needs.details.outputs.new_version }}
-          title: "Bump version to ${{ needs.details.outputs.new_version }}"
-          body: "This PR bumps the version to ${{ needs.details.outputs.new_version }}."
-          labels: "version-bump"
+          password: ${{ secrets.PYPI_API_TOKEN }}
